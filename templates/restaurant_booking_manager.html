@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>饗宴餐廳 - 管理後台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .scrollable-list::-webkit-scrollbar { width: 6px; }
+        .scrollable-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .table-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .table-card:hover { transform: translateY(-4px); }
+        .view-slot-btn.active { background-color: #4f46e5 !important; color: white !important; border-color: #4f46e5 !important; }
+        .view-slot-btn.full { background-color: #f1f5f9; color: #cbd5e1; border-style: dashed; }
+        .form-slot-btn { transition: all 0.2s; border: 1px solid #e2e8f0; }
+        .form-slot-btn.selected { background-color: #4f46e5; color: white; border-color: #4f46e5; }
+        .form-slot-btn.full { background-color: #f8fafc; color: #cbd5e1; cursor: not-allowed; opacity: 0.6; }
+        .auto-tag { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .tab-active { background-color: #4f46e5; color: white; }
+    </style>
+</head>
+<body class="bg-slate-50 p-4 md:p-8">
+
+    <div id="loading-spinner" class="fixed inset-0 bg-white/70 z-[100] flex items-center justify-center hidden">
+        <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent"></div>
+    </div>
+
+    <!-- 分配桌位 Modal -->
+    <div id="assign-modal" class="fixed inset-0 bg-gray-900/80 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
+            <header class="p-6 border-b flex justify-between bg-slate-50 items-center">
+                <h3 class="text-xl font-black text-slate-800">分配座位</h3>
+                <button onclick="closeModal('assign-modal')" class="text-slate-400 text-2xl">✕</button>
+            </header>
+            <div class="p-6 space-y-4">
+                <div id="modal-res-info" class="text-indigo-600 font-bold text-sm"></div>
+                <div class="bg-amber-50 p-3 rounded-xl border border-amber-100 text-[11px] text-amber-700 font-bold">
+                    時段：<span id="target-time-display"></span><br>
+                    <span class="text-indigo-600">※ 優先單桌容納，若單桌空間足夠，系統將禁止選取多桌。</span>
+                </div>
+                <div id="modal-tables-container" class="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2 scrollable-list"></div>
+                <div id="modal-status" class="pt-4 border-t flex flex-col items-center text-center">
+                    <p class="text-sm font-black text-slate-500 uppercase">選取總空間：<span id="selected-cap" class="text-indigo-600 text-xl">0</span></p>
+                    <p id="rule-warning" class="text-[11px] text-rose-500 font-black mt-2 hidden"></p>
+                </div>
+            </div>
+            <footer class="p-6 bg-slate-50 border-t flex justify-end space-x-3">
+                <button onclick="closeModal('assign-modal')" class="px-6 py-2 rounded-xl text-slate-500 font-bold hover:bg-slate-200 transition">取消</button>
+                <button id="modal-assign-btn" onclick="submitAssignment()" class="px-8 py-2 rounded-xl shadow-lg bg-indigo-600 text-white font-black disabled:opacity-30 transition-all">確認存檔</button>
+            </footer>
+        </div>
+    </div>
+
+    <!-- 修改預約 Modal -->
+    <div id="edit-modal" class="fixed inset-0 bg-gray-900/80 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+            <header class="p-6 border-b flex justify-between items-center">
+                <h3 class="text-xl font-black text-slate-800">修改預約內容</h3>
+                <button onclick="closeModal('edit-modal')" class="text-slate-400 text-2xl">✕</button>
+            </header>
+            <div class="p-6 space-y-4">
+                <input type="text" id="edit-name" class="bg-slate-50 p-3 rounded-xl w-full font-bold" placeholder="姓名">
+                <input type="tel" id="edit-phone" class="bg-slate-50 p-3 rounded-xl w-full font-bold" placeholder="電話">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-slate-400 ml-1">人數</label>
+                        <input type="number" id="edit-pSize" class="bg-slate-50 p-3 rounded-xl w-full font-black">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[9px] font-bold text-slate-400 ml-1">日期</label>
+                        <input type="date" id="edit-date" class="bg-slate-50 p-3 rounded-xl w-full text-xs">
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] font-black text-slate-400 uppercase">變更時段 (紅點代表客滿)</label>
+                    <div id="edit-time-slots" class="grid grid-cols-2 gap-2"></div>
+                    <input type="hidden" id="edit-time">
+                </div>
+                <textarea id="edit-note" placeholder="備註" rows="2" class="bg-slate-50 p-3 rounded-xl w-full border-none ring-1 ring-slate-200 text-sm"></textarea>
+            </div>
+            <footer class="p-6 bg-slate-50 border-t flex justify-end gap-2">
+                <button onclick="closeModal('edit-modal')" class="px-6 py-2 text-slate-400 font-bold hover:bg-slate-200 rounded-xl transition">取消</button>
+                <button onclick="submitEdit()" class="px-8 py-2 bg-indigo-600 text-white rounded-xl font-black shadow-lg hover:bg-indigo-700 transition">確認修改</button>
+            </footer>
+        </div>
+    </div>
+
+    <div class="max-w-6xl mx-auto pb-20">
+        <header class="mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+            <div>
+                <h1 class="text-3xl font-black text-slate-900 mb-2 tracking-tight">🍽 饗宴餐廳 - 管理後台</h1>
+                <p id="api-status" class="text-xs font-bold text-slate-400 tracking-widest uppercase">● MySQL 同步正常</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="triggerAllAutoAssign()" class="bg-indigo-50 text-indigo-600 border border-indigo-100 px-6 py-2.5 rounded-2xl text-sm font-black">🤖 批量配位</button>
+                <button onclick="fetchReservations()" class="bg-white border border-slate-200 px-6 py-2.5 rounded-2xl text-sm font-black shadow-sm">🔄 刷新</button>
+            </div>
+        </header>
+
+        <!-- 營運儀表板 -->
+        <div id="stats-dashboard" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><p class="text-slate-400 text-[10px] font-black uppercase mb-1">今日總客數</p><p id="stat-total-people" class="text-2xl font-black text-slate-800">0</p></div>
+            <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"><p class="text-slate-400 text-[10px] font-black uppercase mb-1">已分配桌位</p><p id="stat-confirmed-res" class="text-2xl font-black text-emerald-600">0</p></div>
+            <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 border-l-4 border-l-amber-400"><p class="text-slate-400 text-[10px] font-black uppercase mb-1">等待中</p><p id="stat-pending-res" class="text-2xl font-black text-amber-500">0</p></div>
+            <div class="bg-indigo-600 p-5 rounded-3xl shadow-lg text-white"><p class="text-indigo-200 text-[10px] font-black uppercase mb-1">目前時段負載</p><p id="stat-current-load" class="text-2xl font-black">0%</p></div>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-8 mb-12">
+            <!-- 訂位清單區 -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-3xl shadow-xl border border-slate-100 min-h-[600px] flex flex-col">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b pb-4 mb-6 gap-4">
+                    <div>
+                        <h2 class="text-xl font-black text-indigo-700">📋 訂位清單</h2>
+                        <div class="flex bg-slate-100 p-1 rounded-xl mt-2">
+                            <button id="view-mode-single" onclick="setViewMode('single')" class="px-4 py-2 text-[10px] font-black rounded-lg transition-all tab-active">單日檢視</button>
+                            <button id="view-mode-three" onclick="setViewMode('three')" class="px-4 py-2 text-[10px] font-black rounded-lg text-slate-500">三日檢視</button>
+                        </div>
+                    </div>
+                    <div class="relative w-full sm:w-64">
+                        <input type="text" id="search-input" oninput="renderUI()" placeholder="搜尋姓名或電話..." 
+                               class="w-full bg-slate-50 border-none ring-1 ring-slate-200 rounded-2xl py-2.5 px-4 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                        <span class="absolute right-4 top-2.5 opacity-30 text-xs">🔍</span>
+                    </div>
+                </div>
+                <div id="reservations-list" class="space-y-4 overflow-y-auto pr-2 flex-grow scrollable-list"></div>
+            </div>
+
+            <!-- 現場登記 -->
+            <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 h-fit sticky top-8">
+                <h2 class="text-xl font-black text-indigo-700 mb-6 flex items-center border-b pb-4">✍️ 現場登記</h2>
+                <form id="add-form" class="space-y-4">
+                    <input type="text" id="name" required placeholder="客座姓氏" class="bg-slate-50 p-3 rounded-xl w-full border-none ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 font-bold">
+                    <input type="tel" id="phone" required placeholder="電話" class="bg-slate-50 p-3 rounded-xl w-full border-none ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 font-bold">
+                    <div class="grid grid-cols-2 gap-2">
+                        <input type="number" id="pSize" value="2" min="1" class="bg-slate-50 p-3 rounded-xl w-full font-black">
+                        <input type="date" id="date" required class="bg-slate-50 p-3 rounded-xl w-full text-xs">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-black text-slate-400 uppercase ml-1">選擇時段</label>
+                        <div id="form-time-slots" class="grid grid-cols-2 gap-2"></div>
+                        <input type="hidden" id="time" required>
+                    </div>
+                    <textarea id="note" placeholder="備註 (留空將自動配位)" rows="2" class="bg-slate-50 p-3 rounded-xl w-full border-none ring-1 ring-slate-200 text-sm"></textarea>
+                    <button type="submit" id="add-submit-btn" class="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg">新增現場紀錄</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b pb-6 gap-4">
+                <div>
+                    <h2 class="text-2xl font-black text-slate-800 uppercase">🏢 現場座位圖</h2>
+                    <p id="slot-occupancy-info" class="text-indigo-600 text-xs font-black mt-1"></p>
+                </div>
+                <div id="view-slot-selector" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div id="table-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-6"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        const API = 'http://127.0.0.1:5000';
+        let ALL_RES = [], ALL_TABLES = [], SELECTED_IDS = [], CURRENT_RES = null;
+        let currentViewingSlot = "11:00", selectedFormSlot = "", selectedEditSlot = "", viewMode = "single";
+        const spinner = document.getElementById('loading-spinner');
+        const slots = ["11:00", "12:30", "14:00", "15:30", "17:00", "18:30", "20:00", "21:30"];
+        document.getElementById('date').value = new Date().toISOString().split('T')[0];
+
+        window.setViewMode = (m) => { viewMode = m; renderUI(); }
+
+        function updateDashboardStats() {
+            const d = document.getElementById('date').value;
+            const res = ALL_RES.filter(r => r.status !== 'Canceled' && r.date_time.startsWith(d));
+            document.getElementById('stat-total-people').innerText = res.reduce((s, r) => s + parseInt(r.party_size || 0), 0);
+            document.getElementById('stat-confirmed-res').innerText = res.filter(r => r.status === 'Confirmed').length;
+            document.getElementById('stat-pending-res').innerText = res.filter(r => r.status !== 'Confirmed').length;
+            const totalCap = ALL_TABLES.reduce((s, t) => s + parseInt(t.capacity || 0), 0);
+            const people = ALL_RES.filter(r => r.status !== 'Canceled' && r.date_time === `${d} ${currentViewingSlot}`).reduce((s, r) => s + parseInt(r.party_size || 0), 0);
+            document.getElementById('stat-current-load').innerText = totalCap > 0 ? Math.round((people/totalCap)*100) + '%' : '0%';
+        }
+
+        function refreshAllTimeSlots() {
+            const date = document.getElementById('date').value;
+            const totalCap = ALL_TABLES.reduce((s, t) => s + parseInt(t.capacity || 0), 0);
+            const viewContainer = document.getElementById('view-slot-selector');
+            const formContainer = document.getElementById('form-time-slots');
+            viewContainer.innerHTML = ''; formContainer.innerHTML = '';
+
+            slots.forEach(slot => {
+                const people = ALL_RES.filter(r => r.status !== 'Canceled' && r.date_time === `${date} ${slot}`).reduce((s, r) => s + parseInt(r.party_size || 0), 0);
+                const isFull = totalCap > 0 && people >= totalCap;
+
+                const vBtn = document.createElement('button');
+                vBtn.className = `view-slot-btn px-4 py-2 rounded-2xl text-[10px] font-black border border-slate-200 ${currentViewingSlot === slot ? 'active' : (isFull ? 'full' : 'bg-white text-slate-500')}`;
+                vBtn.innerHTML = `<span>${slot}</span><span class="opacity-60 text-[8px]">${people}/${totalCap}</span>`;
+                vBtn.onclick = () => { currentViewingSlot = slot; refreshAllTimeSlots(); renderUI(); };
+                viewContainer.appendChild(vBtn);
+
+                const fBtn = document.createElement('button');
+                fBtn.type = "button";
+                fBtn.className = `form-slot-btn p-3 rounded-xl text-[10px] font-black flex flex-col items-center ${selectedFormSlot === slot ? 'selected' : (isFull ? 'full' : 'bg-white text-slate-600')}`;
+                fBtn.innerHTML = `<span>${slot}</span><span class="text-[8px] opacity-70">${isFull ? '客滿' : people + '/' + totalCap}</span>`;
+                if (!isFull) fBtn.onclick = () => { selectedFormSlot = slot; document.getElementById('time').value = slot; refreshAllTimeSlots(); };
+                formContainer.appendChild(fBtn);
+
+                if (currentViewingSlot === slot) document.getElementById('slot-occupancy-info').innerText = `目前佔用：${people}/${totalCap} (${isFull?'客滿':'有位'})`;
+            });
+        }
+
+        window.fetchReservations = async function() {
+            try {
+                const [r1, r2] = await Promise.all([fetch(`${API}/tables`), fetch(`${API}/reservations`)]);
+                ALL_TABLES = await r1.json(); ALL_RES = await r2.json();
+                refreshAllTimeSlots(); renderUI();
+                document.getElementById('api-status').innerText = "● MySQL 同步正常";
+                processAutoAssignments();
+            } catch (e) { document.getElementById('api-status').innerText = "○ 連線中斷"; }
+        }
+
+        function checkTableRulesBySlot(tableId, targetDateTime, currentResId = null) {
+            const table = ALL_TABLES.find(t => t.id == tableId);
+            const occupants = ALL_RES.filter(r => r.status === 'Confirmed' && r.date_time === targetDateTime && r.table_ids.includes(parseInt(tableId)) && r.id != currentResId);
+            const totalUsed = occupants.reduce((s, o) => {
+                let rem = parseInt(o.party_size);
+                for(let tid of o.table_ids) {
+                    const cap = parseInt(ALL_TABLES.find(x => x.id == tid).capacity);
+                    const use = Math.min(rem, cap);
+                    if(tid == tableId) return s + use;
+                    rem -= use;
+                }
+                return s;
+            }, 0);
+            const remainingSpace = table.capacity - totalUsed;
+            let canAddGroup = (occupants.length < 2) && (remainingSpace > 0);
+            if (table.capacity === 6 && occupants.some(o => parseInt(o.party_size) >= 4)) canAddGroup = false;
+            return { totalUsed, remainingSpace, occupants, canAddGroup, capacity: table.capacity };
+        }
+
+        async function processAutoAssignments() {
+            const eligible = ALL_RES.filter(r => r.status !== 'Confirmed' && (!r.note || r.note.trim() === ""));
+            if (eligible.length === 0) return;
+            for (let res of eligible) {
+                const tableIds = findAutoAssignment(res.party_size, res.date_time);
+                if (tableIds) await fetch(`${API}/reservations/${res.id}/assign`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ table_ids: tableIds }) });
+            }
+            fetchReservations();
+        }
+
+        function findAutoAssignment(partySize, dateTime) {
+            let needed = parseInt(partySize);
+            let available = ALL_TABLES.map(t => ({ id: parseInt(t.id), info: checkTableRulesBySlot(t.id, dateTime) }))
+                                      .filter(t => t.info.canAddGroup && t.info.remainingSpace > 0);
+            if (available.length === 0) return null;
+            let singleTable = [...available].sort((a,b)=>a.info.remainingSpace - b.info.remainingSpace).find(t => t.info.remainingSpace >= needed);
+            if (singleTable) return [singleTable.id];
+            let bestCluster = null, lowestCost = Infinity;
+            for (let anchor of available) {
+                let sorted = available.map(t => ({ ...t, dist: Math.abs(t.id - anchor.id) })).sort((a,b) => a.dist - b.dist || b.info.remainingSpace - a.info.remainingSpace);
+                let cur = [], cap = 0, minId = Infinity, maxId = -Infinity;
+                for (let t of sorted) {
+                    cur.push(t.id); cap += t.info.remainingSpace; minId = Math.min(minId, t.id); maxId = Math.max(maxId, t.id);
+                    if (cap >= needed) { let cost = (current.length * 1000) + (maxId - minId); if (cost < lowestCost) { lowestCost = cost; bestCluster = [...cur]; } break; }
+                }
+            }
+            return bestCluster;
+        }
+
+        window.triggerAllAutoAssign = () => { spinner.classList.remove('hidden'); processAutoAssignments().finally(() => spinner.classList.add('hidden')); };
+
+        function renderUI() {
+            updateDashboardStats();
+            const list = document.getElementById('reservations-list');
+            const date = document.getElementById('date').value;
+            const term = document.getElementById('search-input').value.trim().toLowerCase();
+            list.innerHTML = '';
+            
+            let filtered = (viewMode === 'single') 
+                ? ALL_RES.filter(r => r.date_time.startsWith(date))
+                : ALL_RES.filter(r => {
+                    const d = new Date(date);
+                    const range = [0,1,2].map(i => { let t = new Date(d); t.setDate(d.getDate() + i); return t.toISOString().split('T')[0]; });
+                    return range.some(dr => r.date_time.startsWith(dr));
+                });
+
+            if (term) {
+                filtered = filtered.filter(r => {
+                    const name = (r.customer_name || "").toString().toLowerCase();
+                    const phone = (r.phone || "").toString().toLowerCase();
+                    return name.includes(term) || phone.includes(term);
+                });
+            }
+
+            filtered.sort((a,b) => a.date_time.localeCompare(b.date_time));
+            let lastD = "";
+            filtered.forEach(res => {
+                const resD = res.date_time.split(' ')[0];
+                if (viewMode === 'three' && resD !== lastD) {
+                    const dt = document.createElement('div');
+                    dt.className = "sticky top-0 bg-slate-50/90 backdrop-blur-sm py-2 text-[10px] font-black text-indigo-400 border-b z-10 mb-2";
+                    dt.innerText = `📅 ${resD}`; list.appendChild(dt); lastD = resD;
+                }
+                const isC = res.status === 'Confirmed';
+                const div = document.createElement('div');
+                div.className = `p-5 border rounded-2xl flex flex-col gap-2 ${isC ? 'bg-slate-50 border-slate-100' : 'bg-white border-indigo-100 shadow-sm'}`;
+                div.innerHTML = `<div class="flex justify-between items-start">
+                    <div><p class="font-black text-slate-800">${res.customer_name} (${res.party_size}位)</p>
+                    <p class="text-[10px] text-slate-400 font-bold">${res.date_time} | ${res.phone}</p>
+                    <p class="mt-1">${isC ? '<span class="text-indigo-600 text-[10px] font-black uppercase bg-indigo-50 px-2 py-0.5 rounded">T'+res.table_ids.join(',')+'</span>' : '<span class="text-amber-500 text-[10px] font-bold">尚未分配</span>'}</p></div>
+                    <div class="flex gap-1">
+                        <button onclick='window.openAssignModal(${JSON.stringify(res)})' class="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl text-[10px] font-black">分配</button>
+                        <button onclick='window.openEditModal(${JSON.stringify(res)})' class="bg-slate-100 text-slate-400 px-3 py-1.5 rounded-xl text-[10px] font-black">修改</button>
+                        <button onclick='window.deleteRes("${res.id}")' class="bg-rose-50 text-rose-400 px-3 py-1.5 rounded-xl text-[10px] font-black">刪除</button>
+                    </div></div>
+                    ${res.note ? `<div class="mt-1 p-2 bg-amber-50 rounded-lg text-[10px] text-amber-700 italic border border-amber-100">備註：${res.note}</div>` : ''}`;
+                list.appendChild(div);
+            });
+
+            const grid = document.getElementById('table-grid'); grid.innerHTML = '';
+            ALL_TABLES.forEach(t => {
+                const info = checkTableRulesBySlot(t.id, `${date} ${currentViewingSlot}`);
+                const isOcc = info.totalUsed > 0;
+                const div = document.createElement('div');
+                div.className = `table-card p-4 border rounded-3xl text-center shadow-sm ${isOcc ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-slate-100'}`;
+                const names = info.occupants.map(o => `<p class="text-[9px] font-bold text-slate-600 truncate">${o.customer_name}</p>`).join('');
+                div.innerHTML = `<p class="text-xl font-black ${isOcc?'text-indigo-700':'text-slate-200'}">T${t.id}</p>
+                    <p class="text-[8px] text-slate-400 font-bold uppercase">席位:${t.capacity}(餘${info.remainingSpace})</p>
+                    <div class="mt-2 pt-2 border-t border-slate-100 min-h-[30px]">${names || '<span class="text-[8px] text-slate-200 italic">空位</span>'}</div>`;
+                grid.appendChild(div);
+            });
+        }
+
+        // --- 分配座位核心 ---
+        window.openAssignModal = (res) => { 
+            CURRENT_RES = res; 
+            SELECTED_IDS = res.table_ids.map(id => parseInt(id)); 
+            document.getElementById('modal-res-info').innerText = `${res.customer_name} | 需要 ${res.party_size} 位`; 
+            document.getElementById('target-time-display').innerText = res.date_time; 
+            renderModalTables(); updateModalStatus(); 
+            document.getElementById('assign-modal').classList.replace('hidden', 'flex'); 
+        };
+
+        function renderModalTables() {
+            const container = document.getElementById('modal-tables-container'); container.innerHTML = '';
+            ALL_TABLES.forEach(t => {
+                const info = checkTableRulesBySlot(t.id, CURRENT_RES.date_time, CURRENT_RES.id);
+                const id = parseInt(t.id); const isS = SELECTED_IDS.includes(id); const isD = !info.canAddGroup && !isS;
+                const btn = document.createElement('button');
+                btn.className = `p-4 border-2 rounded-2xl transition-all ${isD ? 'bg-slate-100 opacity-20 cursor-not-allowed grayscale' : (isS ? 'border-indigo-600 bg-indigo-50 shadow-inner' : 'border-slate-100 bg-white hover:border-indigo-200')}`;
+                btn.innerHTML = `<p class="text-lg font-black">T${t.id}</p><p class="text-[10px] font-bold text-slate-400">餘 ${info.remainingSpace}</p>`;
+                if (!isD) btn.onclick = () => { 
+                    const idx = SELECTED_IDS.indexOf(id); 
+                    if (idx > -1) SELECTED_IDS.splice(idx, 1); 
+                    else SELECTED_IDS.push(id); 
+                    renderModalTables(); updateModalStatus(); 
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function updateModalStatus() {
+            let totalSpace = 0, maxId = -Infinity, minId = Infinity;
+            SELECTED_IDS.forEach(tid => { 
+                const info = checkTableRulesBySlot(tid, CURRENT_RES.date_time, CURRENT_RES.id); 
+                totalSpace += info.remainingSpace; 
+                maxId = Math.max(maxId, tid); minId = Math.min(minId, tid); 
+            });
+            
+            document.getElementById('selected-cap').innerText = totalSpace;
+            const partySize = parseInt(CURRENT_RES.party_size);
+            const warning = document.getElementById('rule-warning');
+            const confirmBtn = document.getElementById('modal-assign-btn');
+
+            const isInsufficient = totalSpace < partySize;
+            const singleTableFit = ALL_TABLES.some(t => {
+                const info = checkTableRulesBySlot(t.id, CURRENT_RES.date_time, CURRENT_RES.id);
+                return info.canAddGroup && info.remainingSpace >= partySize;
+            });
+            const isOverAllocated = singleTableFit && SELECTED_IDS.length > 1;
+
+            if (isInsufficient) {
+                warning.innerText = "❌ 警告：選取的座位總數不足以容納預約人數";
+                warning.classList.remove('hidden');
+                confirmBtn.disabled = true;
+            } else if (isOverAllocated) {
+                warning.innerText = "❌ 警告：單一桌位空間已足夠，請勿同時佔用多張桌子";
+                warning.classList.remove('hidden');
+                confirmBtn.disabled = true;
+            } else {
+                warning.classList.add('hidden');
+                confirmBtn.disabled = false;
+            }
+        }
+
+        // --- 修改功能核心 ---
+        window.openEditModal = (res) => {
+            CURRENT_RES = res; const [d, t] = res.date_time.split(' ');
+            document.getElementById('edit-name').value = res.customer_name;
+            document.getElementById('edit-phone').value = res.phone;
+            document.getElementById('edit-pSize').value = res.party_size;
+            document.getElementById('edit-date').value = d;
+            selectedEditSlot = t;
+            document.getElementById('edit-time').value = t; 
+            
+            // 重要：為修改視窗的日期加入連動監聽
+            document.getElementById('edit-date').onchange = () => {
+                selectedEditSlot = ""; 
+                document.getElementById('edit-time').value = "";
+                refreshEditSlots();
+            };
+            
+            refreshEditSlots();
+            document.getElementById('edit-modal').classList.replace('hidden', 'flex');
+        };
+
+        function refreshEditSlots() {
+            const date = document.getElementById('edit-date').value;
+            const container = document.getElementById('edit-time-slots');
+            const totalCap = ALL_TABLES.reduce((s, t) => s + parseInt(t.capacity || 0), 0);
+            container.innerHTML = '';
+            slots.forEach(slot => {
+                // 修改邏輯：計算人數時排除自己，避免修改人數時因為自己原本的人數顯示客滿
+                const p = ALL_RES.filter(r => r.status !== 'Canceled' && r.date_time === `${date} ${slot}` && r.id != CURRENT_RES.id).reduce((s, r) => s + parseInt(r.party_size || 0), 0);
+                const isFull = totalCap > 0 && p >= totalCap;
+                const btn = document.createElement('button');
+                btn.type = "button";
+                btn.className = `form-slot-btn p-3 rounded-xl text-[10px] font-black flex flex-col items-center ${selectedEditSlot === slot ? 'selected' : (isFull ? 'full' : 'bg-white')}`;
+                btn.innerHTML = `<span>${slot}</span><span class="text-[8px] opacity-70">${isFull?'客滿':p+'/'+totalCap}</span>`;
+                if (!isFull) btn.onclick = () => { 
+                    selectedEditSlot = slot; 
+                    document.getElementById('edit-time').value = slot; 
+                    refreshEditSlots(); 
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        window.submitEdit = async () => {
+            const time = document.getElementById('edit-time').value;
+            if (!time) { alert("請先選取預約時段"); return; }
+            
+            const payload = {
+                name: document.getElementById('edit-name').value, phone: document.getElementById('edit-phone').value,
+                party_size: document.getElementById('edit-pSize').value, date: document.getElementById('edit-date').value,
+                time: time, note: document.getElementById('edit-note').value
+            };
+            spinner.classList.remove('hidden');
+            try {
+                const res = await fetch(`${API}/reservations/${CURRENT_RES.id}`, { 
+                    method: 'PATCH', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify(payload) 
+                });
+                if (res.ok) {
+                    closeModal('edit-modal'); 
+                    await fetchReservations();
+                } else {
+                    const err = await res.json();
+                    alert("修改失敗：" + (err.error || "請檢查該時段是否客滿"));
+                }
+            } catch (e) { alert("連線失敗"); }
+            finally { spinner.classList.add('hidden'); }
+        };
+
+        window.submitAssignment = async () => {
+            spinner.classList.remove('hidden');
+            try {
+                await fetch(`${API}/reservations/${CURRENT_RES.id}/assign`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ table_ids: SELECTED_IDS }) });
+                closeModal('assign-modal'); fetchReservations();
+            } catch (e) { alert("分配失敗"); }
+            finally { spinner.classList.add('hidden'); }
+        };
+
+        window.closeModal = (id) => {
+            document.getElementById(id).classList.replace('flex', 'hidden');
+            CURRENT_RES = null;
+        }
+        
+        window.deleteRes = async (id) => {
+            if (!confirm("確定要刪除這筆訂位嗎？")) return;
+            spinner.classList.remove('hidden');
+            const res = await fetch(`${API}/reservations/${id}`, { method: 'DELETE' });
+            if (res.ok) { ALL_RES = ALL_RES.filter(r => r.id != id); renderUI(); await new Promise(r => setTimeout(r, 200)); await fetchReservations(); }
+            spinner.classList.add('hidden');
+        };
+
+        document.getElementById('add-form').onsubmit = async (e) => {
+            e.preventDefault(); const t = document.getElementById('time').value; if (!t) { alert("請選時段"); return; }
+            const p = { name: document.getElementById('name').value, phone: document.getElementById('phone').value, party_size: document.getElementById('pSize').value, date: document.getElementById('date').value, time: t, note: document.getElementById('note').value };
+            spinner.classList.remove('hidden'); await fetch(`${API}/reservations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(p) });
+            currentViewingSlot = t; document.getElementById('add-form').reset(); selectedFormSlot = ""; document.getElementById('time').value = ""; await fetchReservations(); spinner.classList.add('hidden');
+        };
+
+        document.getElementById('date').addEventListener('change', () => { selectedFormSlot = ""; document.getElementById('time').value = ""; refreshAllTimeSlots(); renderUI(); });
+        fetchReservations(); setInterval(fetchReservations, 15000);
+    </script>
+</body>
+</html>
