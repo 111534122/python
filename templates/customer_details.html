@@ -18,6 +18,10 @@
 </head>
 <body class="bg-slate-50 min-h-screen">
 
+    <div id="loading-spinner" class="fixed inset-0 bg-white/70 z-[100] flex items-center justify-center hidden">
+        <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent"></div>
+    </div>
+
     <header class="relative h-64 md:h-80 overflow-hidden shadow-2xl mb-10">
         <img src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?ixlib=rb-4.0.3&auto=format&fit=crop&w=1470&q=80" alt="餐廳實景" class="absolute inset-0 w-full h-full object-cover">
         <div class="absolute inset-0 hero-overlay flex flex-col items-center justify-center text-white px-4 text-center">
@@ -27,20 +31,18 @@
     </header>
 
     <main class="max-w-4xl mx-auto px-4 pb-20">
-        <!-- 頁籤導覽 -->
         <div class="flex space-x-2 mb-8 bg-white p-1.5 rounded-2xl shadow-md border border-slate-100 max-w-md mx-auto">
             <button id="b-btn" onclick="switchTab('book')" class="flex-1 py-3 text-sm font-black rounded-xl bg-indigo-50 text-indigo-600 transition-all shadow-inner">我要訂位</button>
             <button id="s-btn" onclick="switchTab('search')" class="flex-1 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-indigo-600 transition-all">查詢與修改</button>
         </div>
 
-        <!-- 區塊：填寫預約 -->
         <section id="p-book" class="grid grid-cols-1 lg:grid-cols-12 gap-8">
             <div class="hidden lg:block lg:col-span-4 space-y-4">
                 <div class="bg-white p-2 rounded-3xl shadow-xl border border-slate-100">
                     <img src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80" alt="特色料理" class="w-full h-auto rounded-2xl object-cover aspect-square mb-4">
                     <div class="px-4 pb-4 text-center">
-                        <h3 class="text-lg font-black text-slate-800">用餐提示</h3>
-                        <p class="text-xs text-slate-500 font-medium mt-1 leading-relaxed">用餐時間為 90 分鐘。<br>預約保留 15 分鐘，逾時將自動取消。</p>
+                        <h3 class="text-lg font-black text-slate-800">預約提醒</h3>
+                        <p class="text-xs text-slate-500 font-medium mt-1 leading-relaxed">每個手機號碼在同一時段<br>僅限預約一組席位。</p>
                     </div>
                 </div>
             </div>
@@ -82,7 +84,7 @@
                     </div>
                     <div class="space-y-2">
                         <label class="text-xs font-black text-slate-400 uppercase ml-1">特殊需求備註</label>
-                        <textarea id="note" placeholder="如有過敏、慶生需求請告知..." rows="2" class="bg-slate-50 rounded-xl p-4 w-full border-none ring-1 ring-slate-200 text-sm"></textarea>
+                        <textarea id="note" placeholder="如有特殊需求請告知..." rows="2" class="bg-slate-50 rounded-xl p-4 w-full border-none ring-1 ring-slate-200 text-sm"></textarea>
                     </div>
                     <button type="submit" class="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition active:scale-95">
                         送出預約申請
@@ -111,11 +113,10 @@
     <script type="module">
         const API = 'http://127.0.0.1:5000';
         let ALL_RES = [], ALL_TABLES = [];
-        let selectedTimeSlot = "";
-        let currentEditingResId = null;
+        let globalSelectedSlot = ""; 
+        const spinner = document.getElementById('loading-spinner');
 
-        const dateInput = document.getElementById('date');
-        dateInput.value = new Date().toISOString().split('T')[0];
+        document.getElementById('date').value = new Date().toISOString().split('T')[0];
 
         async function initData() {
             try {
@@ -125,15 +126,11 @@
                 ]);
                 ALL_TABLES = await r1.json();
                 ALL_RES = await r2.json();
-                renderTimeSlots('time-slots-container', 'date', 'time');
+                renderTimeSlots('time-slots-container', 'date', 'time', globalSelectedSlot, (s) => globalSelectedSlot = s);
             } catch (e) { console.error("伺服器連線失敗"); }
         }
 
-        /**
-         * 通用時段渲染函式
-         * @param {string} skipResId - 修改時需傳入，排除自己的人數計算
-         */
-        function renderTimeSlots(containerId, dateId, hiddenId, skipResId = null) {
+        function renderTimeSlots(containerId, dateId, hiddenId, currentVal, setValCallback, skipResId = null) {
             const container = document.getElementById(containerId);
             if (!container) return;
             const selectedDate = document.getElementById(dateId).value;
@@ -142,9 +139,8 @@
             
             container.innerHTML = '';
             slots.forEach(slot => {
-                // 計算人數時，如果傳入了 skipResId，則不計算該筆訂位的人數 (修改自己時不會卡到)
                 const peopleInSlot = ALL_RES
-                    .filter(r => r.status !== 'Canceled' && r.date_time === `${selectedDate} ${slot}` && r.id !== skipResId)
+                    .filter(r => r.status !== 'Canceled' && r.date_time === `${selectedDate} ${slot}` && r.id != skipResId)
                     .reduce((sum, r) => sum + parseInt(r.party_size || 0), 0);
                 
                 const isFull = totalCap > 0 && peopleInSlot >= totalCap;
@@ -152,24 +148,26 @@
                 btn.type = "button";
                 btn.className = `time-slot-btn text-xs font-black py-4 border rounded-xl shadow-sm ${isFull ? 'full' : 'bg-white border-slate-200 text-slate-600 hover:border-indigo-500'}`;
                 
-                // 選取狀態判定
-                if (selectedTimeSlot === slot) btn.classList.add('selected');
-                
+                if (currentVal === slot) btn.classList.add('selected');
                 btn.innerHTML = `<span>${slot}</span>${isFull ? '<br><span class="text-[8px] opacity-60">客滿</span>' : ''}`;
                 
                 if (!isFull) {
                     btn.onclick = () => {
-                        selectedTimeSlot = slot;
+                        setValCallback(slot);
                         document.getElementById(hiddenId).value = slot;
                         document.getElementById('time-error')?.classList.add('hidden');
-                        renderTimeSlots(containerId, dateId, hiddenId, skipResId);
+                        renderTimeSlots(containerId, dateId, hiddenId, slot, setValCallback, skipResId);
                     };
                 }
                 container.appendChild(btn);
             });
         }
 
-        dateInput.onchange = () => { selectedTimeSlot = ""; document.getElementById('time').value = ""; renderTimeSlots('time-slots-container', 'date', 'time'); };
+        document.getElementById('date').onchange = () => { 
+            globalSelectedSlot = ""; 
+            document.getElementById('time').value = ""; 
+            renderTimeSlots('time-slots-container', 'date', 'time', globalSelectedSlot, (s) => globalSelectedSlot = s); 
+        };
 
         window.switchTab = function(t) {
             const isB = t === 'book';
@@ -179,134 +177,194 @@
             document.getElementById('s-btn').className = `flex-1 py-3 text-sm font-black rounded-xl ${!isB ? 'bg-indigo-50 text-indigo-600 shadow-inner' : 'text-slate-400'}`;
         };
 
-        // --- 送出預約 ---
+        /**
+         * 送出預約 (含重複電話防呆)
+         */
         document.getElementById('book-form').onsubmit = async (e) => {
             e.preventDefault();
             const timeVal = document.getElementById('time').value;
             if (!timeVal) return document.getElementById('time-error').classList.remove('hidden');
 
-            const payload = {
-                name: document.getElementById('name').value.trim() + document.getElementById('sal').value,
-                phone: document.getElementById('tel').value.trim(),
-                party_size: document.getElementById('qty').value,
-                date: document.getElementById('date').value,
-                time: timeVal,
-                note: document.getElementById('note').value.trim()
-            };
-            const res = await fetch(`${API}/reservations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-            if(res.ok) { alert('🎉 預約已成功送出！'); document.getElementById('book-form').reset(); selectedTimeSlot = ""; initData(); }
-            else { alert("預約失敗，該時段可能剛剛已客滿"); }
-        };
+            const phone = document.getElementById('tel').value.trim();
+            const date = document.getElementById('date').value;
+            const fullDateTime = `${date} ${timeVal}`;
 
-        // --- 搜尋邏輯 ---
-        window.doSearch = async function() {
-            const tel = document.getElementById('s-tel').value.trim();
-            if(!tel) return alert("請輸入電話");
-            const res = await fetch(`${API}/reservations`);
-            const data = await res.json();
-            ALL_RES = data; // 更新全域快取
-            const mine = data.filter(r => r.phone === tel);
-            const container = document.getElementById('results');
-            container.innerHTML = mine.length ? '' : '<p class="text-center py-20 text-slate-300 font-bold">查無紀錄</p>';
+            spinner.classList.remove('hidden');
             
-            mine.forEach(r => {
-                const isC = r.status === 'Confirmed';
-                const div = document.createElement('div');
-                div.className = "p-6 bg-slate-50 border border-slate-200 rounded-3xl flex flex-col gap-4 shadow-sm fade-in";
-                div.innerHTML = `
-                    <div id="view-card-${r.id}" class="space-y-4">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="font-black text-slate-800 text-lg">${r.customer_name} <span class="text-xs ${isC?'text-emerald-600':'text-amber-500'}">【${isC?'已確認':'安排中'}】</span></p>
-                                <p class="text-[11px] text-slate-400 font-bold">${r.date_time} | ${r.party_size}位</p>
-                            </div>
-                            <div class="flex gap-2">
-                                <button onclick='showEditUI(${JSON.stringify(r)})' class="text-indigo-600 text-[10px] font-black border border-indigo-100 bg-white px-3 py-1 rounded-full hover:bg-indigo-50">修改</button>
-                                <button onclick="cancelBooking('${r.id}')" class="text-rose-500 text-[10px] font-black border border-rose-100 bg-white px-3 py-1 rounded-full hover:bg-rose-50">取消</button>
-                            </div>
-                        </div>
-                        <div class="py-3 px-5 bg-white border border-slate-100 rounded-2xl text-sm font-bold text-indigo-600">
-                            ${isC ? '📍 座位：T' + r.table_ids.join(', T') : '⏳ 系統正為您規劃最佳座位...'}
-                        </div>
-                    </div>
-                    
-                    <!-- 隱藏的修改介面 -->
-                    <div id="edit-form-${r.id}" class="hidden space-y-4">
-                        <h4 class="text-sm font-black text-indigo-600 border-b pb-2">✏️ 修改預約</h4>
-                        <div class="grid grid-cols-2 gap-2">
-                             <input type="number" id="edit-qty-${r.id}" value="${r.party_size}" min="1" max="20" class="p-3 rounded-xl border-none ring-1 ring-slate-200 text-sm font-black">
-                             <input type="date" id="edit-date-${r.id}" value="${r.date_time.split(' ')[0]}" class="p-3 rounded-xl border-none ring-1 ring-slate-200 text-xs font-bold">
-                        </div>
-                        <div id="edit-slots-${r.id}" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
-                        <input type="hidden" id="edit-time-${r.id}" value="${r.date_time.split(' ')[1]}">
-                        <div class="flex gap-2">
-                            <button onclick="submitUpdate('${r.id}')" class="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs">確認儲存</button>
-                            <button onclick="hideEditUI('${r.id}')" class="flex-1 py-3 bg-slate-200 text-slate-500 rounded-xl font-black text-xs">放棄</button>
-                        </div>
-                    </div>
-                `;
-                container.appendChild(div);
-            });
+            try {
+                // 1. 先抓取最新訂位以做重複檢查
+                const resList = await fetch(`${API}/reservations`).then(r => r.json());
+                const duplicate = resList.find(r => 
+                    r.phone === phone && 
+                    r.date_time === fullDateTime && 
+                    r.status !== 'Canceled'
+                );
+
+                if (duplicate) {
+                    spinner.classList.add('hidden');
+                    alert("⚠️ 預約失敗：該手機號碼在此時段已有預約，請勿重複訂位。");
+                    return;
+                }
+
+                // 2. 沒重複才執行送出
+                const payload = {
+                    name: document.getElementById('name').value.trim() + document.getElementById('sal').value,
+                    phone: phone,
+                    party_size: document.getElementById('qty').value,
+                    date: date,
+                    time: timeVal,
+                    note: document.getElementById('note').value.trim()
+                };
+
+                const res = await fetch(`${API}/reservations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                if(res.ok) { 
+                    alert('🎉 預約已成功送出！'); 
+                    document.getElementById('book-form').reset(); 
+                    globalSelectedSlot = ""; 
+                    await initData(); 
+                } else { alert("預約失敗，該時段可能剛客滿"); }
+            } catch (e) { alert("連線異常"); }
+            finally { spinner.classList.add('hidden'); }
         };
 
-        // --- 顯示修改 UI ---
+        window.doSearch = async function() {
+            const inputTel = document.getElementById('s-tel').value.trim();
+            if(!inputTel) return alert("請輸入電話號碼");
+            
+            spinner.classList.remove('hidden');
+            try {
+                const res = await fetch(`${API}/reservations`);
+                const data = await res.json();
+                ALL_RES = data;
+                const mine = data.filter(r => r.phone.toString().trim() === inputTel);
+                const container = document.getElementById('results');
+                container.innerHTML = mine.length ? '' : '<p class="text-center py-20 text-slate-300 font-bold">查無紀錄</p>';
+                
+                mine.forEach(r => {
+                    const isC = r.status === 'Confirmed';
+                    const div = document.createElement('div');
+                    div.className = "p-6 bg-white border border-slate-200 rounded-3xl flex flex-col gap-4 shadow-sm fade-in";
+                    div.innerHTML = `
+                        <div id="view-card-${r.id}" class="space-y-4">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="font-black text-slate-800 text-lg">${r.customer_name} <span class="text-xs ${isC?'text-emerald-600':'text-amber-500'}">【${isC?'已確認':'安排中'}】</span></p>
+                                    <p class="text-[11px] text-slate-400 font-bold">${r.date_time} | ${r.party_size}位</p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick='showEditUI(${JSON.stringify(r)})' class="text-indigo-600 text-[10px] font-black border border-indigo-100 bg-white px-3 py-1 rounded-full hover:bg-indigo-50 transition">修改</button>
+                                    <button onclick="cancelBooking('${r.id}')" class="text-rose-500 text-[10px] font-black border border-rose-100 bg-white px-3 py-1 rounded-full hover:bg-rose-50 transition">取消</button>
+                                </div>
+                            </div>
+                            <div class="py-3 px-5 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold text-indigo-600">
+                                ${isC ? '📍 座位：T' + r.table_ids.join(', T') : '⏳ 系統正為您規劃最佳座位...'}
+                            </div>
+                        </div>
+                        <div id="edit-form-${r.id}" class="hidden space-y-4">
+                            <h4 class="text-sm font-black text-indigo-600 border-b pb-2">✏️ 修改預約資訊</h4>
+                            <div class="grid grid-cols-2 gap-2">
+                                 <div class="space-y-1">
+                                    <label class="text-[9px] font-bold text-slate-400 ml-1 uppercase">人數</label>
+                                    <input type="number" id="edit-qty-${r.id}" value="${r.party_size}" min="1" max="20" class="w-full p-3 rounded-xl border-none ring-1 ring-slate-200 text-sm font-black outline-none focus:ring-2 focus:ring-indigo-500">
+                                 </div>
+                                 <div class="space-y-1">
+                                    <label class="text-[9px] font-bold text-slate-400 ml-1 uppercase">日期</label>
+                                    <input type="date" id="edit-date-${r.id}" value="${r.date_time.split(' ')[0]}" class="w-full p-3 rounded-xl border-none ring-1 ring-slate-200 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500">
+                                 </div>
+                            </div>
+                            <div id="edit-slots-${r.id}" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+                            <input type="hidden" id="edit-time-${r.id}" value="${r.date_time.split(' ')[1]}">
+                            <div class="flex gap-2 pt-2">
+                                <button onclick="submitUpdate('${r.id}')" class="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-xs shadow-md active:scale-95 transition-transform">確認儲存</button>
+                                <button onclick="hideEditUI('${r.id}')" class="flex-1 py-3 bg-slate-200 text-slate-500 rounded-xl font-black text-xs active:scale-95 transition-transform">放棄修改</button>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+            } catch (e) { alert("連線失敗"); }
+            finally { spinner.classList.add('hidden'); }
+        };
+
         window.showEditUI = function(res) {
             document.getElementById(`view-card-${res.id}`).classList.add('hidden');
             const editForm = document.getElementById(`edit-form-${res.id}`);
             editForm.classList.remove('hidden');
-            
-            selectedTimeSlot = res.date_time.split(' ')[1];
-            
-            // 初始化編輯區的時段
-            const updateSlots = () => {
-                renderTimeSlots(`edit-slots-${res.id}`, `edit-date-${res.id}`, `edit-time-${res.id}`, res.id);
+            let localSelected = res.date_time.split(' ')[1];
+            const updateSlots = (current) => {
+                renderTimeSlots(`edit-slots-${res.id}`, `edit-date-${res.id}`, `edit-time-${res.id}`, current, (s) => localSelected = s, res.id);
             };
-            
-            document.getElementById(`edit-date-${res.id}`).onchange = () => {
-                selectedTimeSlot = "";
-                updateSlots();
-            };
-            
-            updateSlots();
+            document.getElementById(`edit-date-${res.id}`).onchange = () => { localSelected = ""; updateSlots(""); };
+            updateSlots(localSelected);
         };
 
         window.hideEditUI = function(id) {
             document.getElementById(`view-card-${id}`).classList.remove('hidden');
             document.getElementById(`edit-form-${id}`).classList.add('hidden');
-            selectedTimeSlot = "";
         };
 
-        // --- 提交修改 ---
+        /**
+         * 提交修改 (含重複時段防呆)
+         */
         window.submitUpdate = async function(id) {
             const date = document.getElementById(`edit-date-${id}`).value;
             const time = document.getElementById(`edit-time-${id}`).value;
             const party_size = document.getElementById(`edit-qty-${id}`).value;
+            const fullDateTime = `${date} ${time}`;
 
-            if (!time) return alert("請選擇時段");
+            if (!time) return alert("請選擇預約時段");
 
-            const res = await fetch(`${API}/reservations/${id}`, {
-                method: 'PATCH',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ date, time, party_size })
-            });
+            spinner.classList.remove('hidden');
+            try {
+                // 1. 抓取最新資料做防呆檢查
+                const resList = await fetch(`${API}/reservations`).then(r => r.json());
+                const currentRes = resList.find(r => r.id == id);
+                
+                // 檢查該電話在目標時段是否已有「其他」筆訂位
+                const conflict = resList.find(r => 
+                    r.phone === currentRes.phone && 
+                    r.id != id && 
+                    r.date_time === fullDateTime && 
+                    r.status !== 'Canceled'
+                );
 
-            if (res.ok) {
-                alert("修改成功！狀態已重設為「安排中」。");
-                doSearch();
-            } else {
-                const err = await res.json();
-                alert(err.error || "修改失敗");
-            }
+                if (conflict) {
+                    spinner.classList.add('hidden');
+                    alert("⚠️ 修改失敗：該手機號碼在目標時段已有一筆預約，請勿重複訂位。");
+                    return;
+                }
+
+                // 2. 沒衝突才發送 PATCH
+                const res = await fetch(`${API}/reservations/${id}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ date, time, party_size })
+                });
+
+                if (res.ok) {
+                    alert("修改成功！狀態已重設為「安排中」。");
+                    await doSearch();
+                    await initData();
+                } else {
+                    const err = await res.json();
+                    alert(err.error || "修改失敗，時段客滿");
+                }
+            } catch (e) { alert("伺服器連線失敗"); }
+            finally { spinner.classList.add('hidden'); }
         };
 
         window.cancelBooking = async (id) => {
             if(!confirm("確定要取消預約嗎？")) return;
-            const res = await fetch(`${API}/reservations/${id}`, { method: 'DELETE' });
-            if (res.ok) { alert("已取消預約"); doSearch(); initData(); }
+            spinner.classList.remove('hidden');
+            try {
+                const res = await fetch(`${API}/reservations/${id}`, { method: 'DELETE' });
+                if (res.ok) { alert("已取消預約"); await doSearch(); await initData(); }
+            } catch (e) { alert("連線失敗"); }
+            finally { spinner.classList.add('hidden'); }
         };
 
         initData();
-        setInterval(initData, 20000);
+        setInterval(initData, 30000);
     </script>
 </body>
 </html>
